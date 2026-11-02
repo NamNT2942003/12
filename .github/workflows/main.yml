@@ -1,0 +1,106 @@
+name: Order Service Full CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # ==============================================================
+  # NHÓM 1: CÔNG VIỆC CHẠY SONG SONG (PARALLEL JOBS)
+  # ==============================================================
+
+  # Job 1: Kiểm tra chất lượng mã nguồn (Code Quality Check)
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Run Code Quality & Lint
+        run: |
+          chmod +x ./gradlew
+          ./gradlew check
+
+  # Job 2: Chạy Unit Test có PostgreSQL Service Container
+  unit-test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+
+    # Khởi tạo PostgreSQL Database tạm thời cho môi trường CI
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: quickbite_order_db
+          POSTGRES_USER: quickbite
+          POSTGRES_PASSWORD: password123
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Run Unit Tests with PostgreSQL Connection
+        env:
+          SPRING_DATASOURCE_HOST: localhost
+          SPRING_DATASOURCE_PORT: 5432
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/quickbite_order_db
+          SPRING_DATASOURCE_USERNAME: quickbite
+          SPRING_DATASOURCE_PASSWORD: password123
+        run: |
+          chmod +x ./gradlew
+          ./gradlew test
+
+  # ==============================================================
+  # NHÓM 2: CÔNG VIỆC CHẠY TUẦN TỰ SAU KHI CẢ 2 JOB TRÊN PASS
+  # ==============================================================
+
+  # Job 3: Build và đóng gói ứng dụng thành file JAR
+  build:
+    name: Build & Package Artifact
+    needs: [code-quality, unit-test] # Chỉ chạy khi cả 2 job song song đều thành công
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code (Job Isolation)
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK 17 (Job Isolation)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build JAR with Gradle
+        run: |
+          chmod +x ./gradlew
+          ./gradlew bootJar
+
+      - name: Upload Build Artifact (7 Days Retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-service-artifact
+          path: build/libs/*.jar
+          retention-days: 7
